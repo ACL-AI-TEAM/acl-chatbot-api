@@ -33,86 +33,47 @@ class RAGService:
         self.is_initialized = False
         self.stats = {}
 
-    # =========================================================
-    # MAPPING INTELLIGENT : pays → fichiers/dossiers associés
-    # Toutes les variantes sont normalisées automatiquement
-    # =========================================================
     COUNTRY_MAPPING = {
-        # Sénégal → dossier ACL_Sn + tous les fichiers CitizenLab Sénégal
         "senegal": [
             "acl_sn", "faq_data", "citizenlab_rag_clean",
             "citizenlab_team", "mission_citizenlab",
             "programme", "scrap_site"
         ],
-        # Bénin
-        "benin": ["acl_benin"],
-        # Cameroun
-        "cameroun": ["acl_cameroun"],
-        "cameroon": ["acl_cameroun"],
-        # Tchad
-        "tchad": ["acl_chad"],
-        "chad": ["acl_chad"],
-        # Guinée
-        "guinee": ["acl_guinee"],
-        # Madagascar
+        "benin":      ["acl_benin"],
+        "cameroun":   ["acl_cameroun"],
+        "cameroon":   ["acl_cameroun"],
+        "tchad":      ["acl_chad"],
+        "chad":       ["acl_chad"],
+        "guinee":     ["acl_guinee"],
         "madagascar": ["acl_madagascar"],
-        # Mauritanie
         "mauritanie": ["acl_mauritania"],
         "mauritania": ["acl_mauritania"],
     }
 
-    # Variantes orthographiques → clé canonique normalisée
     COUNTRY_ALIASES = {
-        "senegal":    "senegal",
-        "sénégal":    "senegal",
-        "Senegal":    "senegal",
-        "Sénégal":    "senegal",
-        "SENEGAL":    "senegal",
-        "benin":      "benin",
-        "bénin":      "benin",
-        "Benin":      "benin",
-        "Bénin":      "benin",
-        "BENIN":      "benin",
-        "cameroun":   "cameroun",
-        "Cameroun":   "cameroun",
-        "cameroon":   "cameroun",
-        "Cameroon":   "cameroun",
-        "CAMEROUN":   "cameroun",
-        "tchad":      "tchad",
-        "Tchad":      "tchad",
-        "chad":       "tchad",
-        "Chad":       "tchad",
-        "TCHAD":      "tchad",
-        "guinee":     "guinee",
-        "guinée":     "guinee",
-        "Guinee":     "guinee",
-        "Guinée":     "guinee",
-        "GUINEE":     "guinee",
-        "madagascar": "madagascar",
-        "Madagascar": "madagascar",
-        "MADAGASCAR": "madagascar",
-        "mauritanie": "mauritanie",
-        "Mauritanie": "mauritanie",
-        "mauritania": "mauritanie",
-        "Mauritania": "mauritanie",
-        "MAURITANIE": "mauritanie",
+        "senegal": "senegal", "sénégal": "senegal",
+        "Senegal": "senegal", "Sénégal": "senegal", "SENEGAL": "senegal",
+        "benin": "benin", "bénin": "benin",
+        "Benin": "benin", "Bénin": "benin", "BENIN": "benin",
+        "cameroun": "cameroun", "Cameroun": "cameroun",
+        "cameroon": "cameroun", "Cameroon": "cameroun", "CAMEROUN": "cameroun",
+        "tchad": "tchad", "Tchad": "tchad",
+        "chad": "tchad", "Chad": "tchad", "TCHAD": "tchad",
+        "guinee": "guinee", "guinée": "guinee",
+        "Guinee": "guinee", "Guinée": "guinee", "GUINEE": "guinee",
+        "madagascar": "madagascar", "Madagascar": "madagascar", "MADAGASCAR": "madagascar",
+        "mauritanie": "mauritanie", "Mauritanie": "mauritanie",
+        "mauritania": "mauritanie", "Mauritania": "mauritanie", "MAURITANIE": "mauritanie",
     }
 
     def _normalize(self, text: str) -> str:
-        """Supprime les accents et met en minuscules"""
         text = text.lower().strip()
         nfkd = unicodedata.normalize('NFKD', text)
         return ''.join(c for c in nfkd if not unicodedata.combining(c))
 
     def _resolve_country(self, country: str) -> Optional[str]:
-        """
-        Résout n'importe quelle variante d'un pays vers sa clé canonique.
-        Ex: 'Bénin', 'BENIN', 'benin' → 'benin'
-        """
-        # Essai direct dans les aliases
         if country in self.COUNTRY_ALIASES:
             return self.COUNTRY_ALIASES[country]
-        # Essai normalisé
         country_norm = self._normalize(country)
         for alias, canonical in self.COUNTRY_ALIASES.items():
             if self._normalize(alias) == country_norm:
@@ -120,36 +81,25 @@ class RAGService:
         return None
 
     def _get_country_keywords(self, country: str) -> List[str]:
-        """Retourne les mots-clés fichiers/dossiers pour un pays donné"""
         canonical = self._resolve_country(country)
         if canonical and canonical in self.COUNTRY_MAPPING:
             return self.COUNTRY_MAPPING[canonical]
-        # Fallback : utilise le nom normalisé directement
         return [self._normalize(country)]
 
     def _detect_country_in_query(self, query: str) -> List[str]:
-        """
-        Détecte intelligemment un pays dans la question.
-        Fonctionne avec accents, majuscules, fautes légères.
-        """
         query_normalized = self._normalize(query)
-
-        # Cherche chaque alias dans la query normalisée
         for alias in self.COUNTRY_ALIASES:
             alias_normalized = self._normalize(alias)
-            # Vérifie que c'est un mot entier (pas juste une sous-chaîne)
             pattern = r'\b' + re.escape(alias_normalized) + r'\b'
             if re.search(pattern, query_normalized):
                 canonical = self.COUNTRY_ALIASES[alias]
                 keywords = self.COUNTRY_MAPPING.get(canonical, [alias_normalized])
-                logger.debug(f"🌍 Pays détecté: '{alias}' → canonical: '{canonical}' → keywords: {keywords}")
+                logger.debug(f"🌍 Pays détecté: '{alias}' → '{canonical}' → {keywords}")
                 return keywords
-
         return []
 
     def initialize(self, knowledge_base_dir: str = "knowledge_base"):
         kb_path = Path(knowledge_base_dir)
-
         if not kb_path.exists():
             logger.warning(f"⚠️  Dossier knowledge_base non trouvé : {kb_path.absolute()}")
             self.is_initialized = True
@@ -281,14 +231,10 @@ class RAGService:
         query_normalized = self._normalize(query)
         query_keywords = set(re.findall(r'\b\w{3,}\b', query_normalized)) - stopwords
 
-        # Résolution du pays : filtre explicite OU détection dans la query
         if country_filter:
             country_keywords = self._get_country_keywords(country_filter)
-            logger.debug(f"🌍 Filtre explicite '{country_filter}' → {country_keywords}")
         else:
             country_keywords = self._detect_country_in_query(query)
-            if country_keywords:
-                logger.debug(f"🔍 Pays auto-détecté → {country_keywords}")
 
         scored_chunks = []
 
@@ -296,7 +242,6 @@ class RAGService:
             folder_normalized = self._normalize(chunk.metadata.get("folder", ""))
             source_normalized = self._normalize(chunk.source_file)
 
-            # Filtre pays intelligent
             if country_keywords:
                 match = any(
                     kw in folder_normalized or kw in source_normalized
@@ -305,7 +250,6 @@ class RAGService:
                 if not match:
                     continue
 
-            # Calcul du score
             if not query_keywords:
                 score = 0.1
             else:
@@ -320,19 +264,19 @@ class RAGService:
             if score > 0:
                 scored_chunks.append((chunk, min(score, 1.0)))
 
-        # Fallback global si aucun résultat avec filtre pays
         if not scored_chunks and country_keywords:
-            logger.warning("⚠️ Aucun résultat avec filtre pays → fallback recherche globale")
+            logger.warning("⚠️ Fallback recherche globale")
             return self.search(query=query, top_k=top_k, country_filter=None)
 
         scored_chunks.sort(key=lambda x: x[1], reverse=True)
         return scored_chunks[:top_k]
 
     def format_context(self, results: List[Tuple[DocumentChunk, float]]) -> str:
+        """Formate le contexte SANS noms de fichiers pour éviter que le modèle les reproduise"""
         if not results:
             return "Aucun contexte trouvé dans la knowledge base."
         parts = [
-            f"[Source {i} - {chunk.source_file}]\n{chunk.content}"
+            f"[Extrait {i}]\n{chunk.content}"
             for i, (chunk, _) in enumerate(results, 1)
         ]
         return "\n\n---\n\n".join(parts)

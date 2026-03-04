@@ -17,79 +17,75 @@ Ton rôle est d'aider les utilisateurs à trouver des informations sur :
 
 Instructions STRICTES :
 1. Réponds TOUJOURS en français
-2. Utilise le contexte fourni pour répondre avec précision
+2. Utilise les extraits de contexte fournis pour répondre avec précision
 3. Si l'information n'est pas dans le contexte, dis-le honnêtement
 4. Sois concis, clair et professionnel
 5. Ne fabrique jamais d'informations
-6. INTERDIT : Ne mentionne JAMAIS les sources, fichiers, CSV ou références dans ta réponse
-7. INTERDIT : N'écris JAMAIS de section Sources, Références ou similaire
-8. INTERDIT : N'utilise JAMAIS d'astérisques, markdown ou mise en forme spéciale
-9. Réponds uniquement avec du texte brut en paragraphes clairs et directs
-10. Va droit au but sans formules de politesse excessives
+6. INTERDIT ABSOLU : Ne mentionne JAMAIS de fichiers, CSV, sources, références
+7. INTERDIT ABSOLU : N'écris JAMAIS de section Sources, Références, 📚 ou similaire
+8. INTERDIT ABSOLU : N'utilise JAMAIS d'astérisques ou markdown
+9. Réponds UNIQUEMENT avec du texte brut en paragraphes directs
+10. Termine ta réponse dès que tu as répondu à la question — rien d'autre après
 
-Contexte de la knowledge base :
+Contexte :
 {context}""",
 
     "en": """You are the intelligent assistant of AfricTivistes CitizenLab (ACL), a pan-African organization dedicated to promoting digital citizenship and democracy in Africa.
 
-Your role is to help users find information about:
-- AfricTivistes CitizenLab programs and activities
-- Digital citizenship in Africa
-- African CiviTech actors
-- Reports and studies on citizen internet in Africa
-
 STRICT Instructions:
 1. ALWAYS respond in English
-2. Use the provided context to answer accurately
+2. Use the context extracts provided to answer accurately
 3. If information is not in the context, say so honestly
 4. Be concise, clear and professional
 5. Never fabricate information
-6. FORBIDDEN: Never mention sources, files, CSV or references in your response
-7. FORBIDDEN: Never write a Sources or References section
-8. FORBIDDEN: Never use asterisks, markdown or special formatting
-9. Respond only with plain text in clear and direct paragraphs
-10. Get straight to the point
+6. ABSOLUTE FORBIDDEN: Never mention files, CSV, sources or references
+7. ABSOLUTE FORBIDDEN: Never write a Sources, References or 📚 section
+8. ABSOLUTE FORBIDDEN: Never use asterisks or markdown
+9. Respond ONLY with plain text in direct paragraphs
+10. End your response as soon as you have answered — nothing else after
 
-Knowledge base context:
+Context:
 {context}"""
 }
 
 
 def clean_response(text: str) -> str:
-    """
-    Nettoyage automatique de la réponse :
-    - Supprime TOUT ce qui vient après 📚 ou Sources: ou Références:
-    - Supprime les lignes avec noms de fichiers .csv/.pdf/.txt
-    - Supprime l'emoji 📚
-    - Supprime le markdown (astérisques, #, listes)
-    - Nettoie les lignes vides en excès
-    """
-    # Supprime TOUT ce qui vient après 📚 Sources / Références (et tout ce qui suit)
+    """Nettoyage agressif et garanti de la réponse"""
+
+    # Supprime TOUT après Sources / Références / 📚 (capture tout jusqu'à la fin)
     text = re.sub(
-        r'\n*[\n\r]*(?:📚\s*)?(?:Sources?|Références?|References?)\s*:[\s\S]*$',
+        r'[\n\r]*(?:📚\s*)?(?:Sources?|Références?|References?)\s*:[\s\S]*$',
         '',
         text,
         flags=re.IGNORECASE
     )
 
-    # Supprime les lignes contenant .csv/.pdf/.txt avec ou sans (XX%)
+    # Supprime chaque ligne contenant .csv / .pdf / .txt
     text = re.sub(
-        r'[^\n]*\.(csv|pdf|txt)[^\n]*',
+        r'^[^\n]*\.(csv|pdf|txt)[^\n]*$',
         '',
         text,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE | re.MULTILINE
     )
 
-    # Supprime l'emoji 📚 et tout ce qui suit sur la même ligne
+    # Supprime chaque ligne contenant (XX%)
+    text = re.sub(
+        r'^[^\n]*\(\d+%\)[^\n]*$',
+        '',
+        text,
+        flags=re.MULTILINE
+    )
+
+    # Supprime 📚 et tout ce qui suit sur la ligne
     text = re.sub(r'📚[^\n]*', '', text)
 
-    # Supprime les astérisques markdown gras/italique : **texte** ou *texte*
-    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)
+    # Supprime **texte** et *texte*
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text, flags=re.DOTALL)
 
-    # Supprime les titres markdown (#, ##, ###...)
+    # Supprime les titres markdown
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
 
-    # Supprime les listes markdown (* item ou - item)
+    # Supprime les listes markdown
     text = re.sub(r'^\s*[\*\-]\s+', '', text, flags=re.MULTILINE)
 
     # Supprime les lignes vides multiples
@@ -122,8 +118,7 @@ class GroqService:
     ) -> Tuple[str, Optional[int]]:
 
         if not self.client:
-            msg = "❌ Service LLM non disponible. Vérifiez GROQ_API_KEY."
-            return msg, None
+            return "❌ Service LLM non disponible. Vérifiez GROQ_API_KEY.", None
 
         system_prompt = SYSTEM_PROMPTS.get(language, SYSTEM_PROMPTS["fr"]).format(context=context)
 
@@ -140,10 +135,7 @@ class GroqService:
                 temperature=0.7,
             )
             answer = response.choices[0].message.content
-
-            # Nettoyage automatique
             answer = clean_response(answer)
-
             tokens = response.usage.total_tokens if response.usage else None
             return answer, tokens
 
