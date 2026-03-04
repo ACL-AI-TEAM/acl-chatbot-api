@@ -58,29 +58,38 @@ Knowledge base context:
 def clean_response(text: str) -> str:
     """
     Nettoyage automatique de la réponse :
-    - Supprime les sections Sources/Références
-    - Supprime les lignes avec noms de fichiers
+    - Supprime TOUT ce qui vient après 📚 ou Sources: ou Références:
+    - Supprime les lignes avec noms de fichiers .csv/.pdf/.txt
+    - Supprime l'emoji 📚
     - Supprime le markdown (astérisques, #, listes)
     - Nettoie les lignes vides en excès
     """
-    # Supprime tout ce qui vient après une section Sources/Références
+    # Supprime TOUT ce qui vient après 📚 Sources / Références (et tout ce qui suit)
     text = re.sub(
-        r'\n*(?:📚\s*)?(?:Sources?|Références?|References?)\s*:.*',
+        r'\n*[\n\r]*(?:📚\s*)?(?:Sources?|Références?|References?)\s*:[\s\S]*$',
         '',
         text,
-        flags=re.IGNORECASE | re.DOTALL
+        flags=re.IGNORECASE
     )
 
-    # Supprime les lignes contenant des noms de fichiers .csv/.pdf/.txt
-    text = re.sub(r'\n.*\.(csv|pdf|txt).*', '', text, flags=re.IGNORECASE)
+    # Supprime les lignes contenant .csv/.pdf/.txt avec ou sans (XX%)
+    text = re.sub(
+        r'[^\n]*\.(csv|pdf|txt)[^\n]*',
+        '',
+        text,
+        flags=re.IGNORECASE
+    )
 
-    # Supprime les astérisques markdown gras/italique
+    # Supprime l'emoji 📚 et tout ce qui suit sur la même ligne
+    text = re.sub(r'📚[^\n]*', '', text)
+
+    # Supprime les astérisques markdown gras/italique : **texte** ou *texte*
     text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)
 
-    # Supprime les titres markdown (#, ##, ###)
+    # Supprime les titres markdown (#, ##, ###...)
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
 
-    # Convertit les listes markdown en texte simple
+    # Supprime les listes markdown (* item ou - item)
     text = re.sub(r'^\s*[\*\-]\s+', '', text, flags=re.MULTILINE)
 
     # Supprime les lignes vides multiples
