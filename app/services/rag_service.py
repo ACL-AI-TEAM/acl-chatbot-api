@@ -33,11 +33,45 @@ class RAGService:
         self.is_initialized = False
         self.stats = {}
 
+    # Mapping pays → mots-clés présents dans les noms de dossiers/fichiers
+    COUNTRY_MAPPING = {
+        "senegal":    ["acl_sn", "faq_data", "citizenlab", "mission_citizen", "programme", "scrap_site", "citizenlab_team", "citizenlab_rag"],
+        "sénégal":    ["acl_sn", "faq_data", "citizenlab", "mission_citizen", "programme", "scrap_site", "citizenlab_team", "citizenlab_rag"],
+        "benin":      ["acl_benin"],
+        "bénin":      ["acl_benin"],
+        "cameroun":   ["acl_cameroun"],
+        "cameroon":   ["acl_cameroun"],
+        "chad":       ["acl_chad"],
+        "tchad":      ["acl_chad"],
+        "guinee":     ["acl_guinee"],
+        "guinée":     ["acl_guinee"],
+        "madagascar": ["acl_madagascar"],
+        "mauritania": ["acl_mauritania"],
+        "mauritanie": ["acl_mauritania"],
+    }
+
     def _normalize(self, text: str) -> str:
         """Supprime les accents et met en minuscules"""
         text = text.lower().strip()
         nfkd = unicodedata.normalize('NFKD', text)
         return ''.join(c for c in nfkd if not unicodedata.combining(c))
+
+    def _get_country_keywords(self, country: str) -> List[str]:
+        """Retourne les mots-clés fichiers/dossiers associés à un pays"""
+        country_norm = self._normalize(country)
+        # Cherche dans le mapping avec normalisation
+        for key, keywords in self.COUNTRY_MAPPING.items():
+            if self._normalize(key) == country_norm:
+                return keywords
+        # Fallback : utilise le nom tel quel
+        return [country_norm]
+
+    def _detect_country_in_query(self, query_normalized: str) -> List[str]:
+        """Détecte automatiquement un pays mentionné dans la question"""
+        for key, keywords in self.COUNTRY_MAPPING.items():
+            if self._normalize(key) in query_normalized:
+                return keywords
+        return []
 
     def initialize(self, knowledge_base_dir: str = "knowledge_base"):
         kb_path = Path(knowledge_base_dir)
@@ -82,7 +116,6 @@ class RAGService:
         count = 0
         folder = file_path.parent.name
         encodings = ['utf-8', 'latin-1', 'utf-8-sig']
-
         for encoding in encodings:
             try:
                 with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
@@ -166,44 +199,58 @@ class RAGService:
 
         stopwords = {
             'les', 'des', 'une', 'que', 'qui', 'pour', 'the', 'and', 'for',
-            'quels', 'comment', 'what', 'how', 'est', 'sont', 'avec', 'dans'
+            'quels', 'comment', 'what', 'how', 'est', 'sont', 'avec', 'dans',
+            'cest', 'quoi', 'vous', 'nous', 'ils', 'elles', 'votre', 'notre'
         }
 
-        # Normalise la query (supprime accents, minuscules)
         query_normalized = self._normalize(query)
         query_keywords = set(re.findall(r'\b\w{3,}\b', query_normalized)) - stopwords
+
+        # Détermine les mots-clés pays à utiliser
+        if country_filter:
+            # Pays fourni explicitement → utilise le mapping
+            country_keywords = self._get_country_keywords(country_filter)
+            logger.debug(f"🌍 Filtre pays '{country_filter}' → keywords: {country_keywords}")
+        else:
+            # Détection automatique du pays dans la question
+            country_keywords = self._detect_country_in_query(query_normalized)
+            if country_keywords:
+                logger.debug(f"🔍 Pays détecté dans la query → keywords: {country_keywords}")
 
         scored_chunks = []
 
         for chunk in self.chunks:
-            # Filtre pays avec normalisation
-            if country_filter:
-                folder = chunk.metadata.get("folder", "")
-                source = chunk.source_file
-                country_normalized = self._normalize(country_filter)
-                folder_normalized = self._normalize(folder)
-                source_normalized = self._normalize(source)
+            folder_normalized = self._normalize(chunk.metadata.get("folder", ""))
+            source_normalized = self._normalize(chunk.source_file)
 
-                if country_normalized not in folder_normalized and country_normalized not in source_normalized:
+            # Filtre par pays si des mots-clés ont été détectés
+            if country_keywords:
+                match = any(
+                    kw in folder_normalized or kw in source_normalized
+                    for kw in country_keywords
+                )
+                if not match:
                     continue
 
-            # Score par mots-clés
+            # Calcul du score
             if not query_keywords:
                 score = 0.1
             else:
-                # Normalise aussi les keywords du chunk pour la comparaison
                 chunk_content_normalized = self._normalize(chunk.content)
                 chunk_keywords_normalized = set(re.findall(r'\b\w{3,}\b', chunk_content_normalized))
-
                 common = query_keywords & chunk_keywords_normalized
                 score = len(common) / len(query_keywords)
-
                 for keyword in query_keywords:
                     if keyword in chunk_content_normalized:
                         score += 0.05
 
             if score > 0:
                 scored_chunks.append((chunk, min(score, 1.0)))
+
+        # Fallback : si aucun résultat avec filtre pays → cherche sans filtre
+        if not scored_chunks and country_keywords:
+            logger.warning(f"⚠️ Aucun résultat avec filtre pays, recherche globale...")
+            return self.search(query=query, top_k=top_k, country_filter=None)
 
         scored_chunks.sort(key=lambda x: x[1], reverse=True)
         return scored_chunks[:top_k]
