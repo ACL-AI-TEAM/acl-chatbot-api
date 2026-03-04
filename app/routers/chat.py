@@ -45,23 +45,27 @@ async def chat(
     # 6. Sauvegarder la réponse
     session_manager.add_message(session.session_id, "assistant", response_text)
 
-    # 7. Formater les sources
-    sources = [
-        Source(
-            content=chunk.content[:300] + "..." if len(chunk.content) > 300 else chunk.content,
-            source_file=chunk.source_file,
-            relevance_score=round(score, 3)
-        )
-        for chunk, score in rag_results
-    ]
+    # 7. Formater les sources — dédupliquées par nom de fichier
+    seen_sources = set()
+    unique_sources = []
+    for chunk, score in rag_results:
+        if chunk.source_file not in seen_sources:
+            seen_sources.add(chunk.source_file)
+            unique_sources.append(
+                Source(
+                    content=chunk.content[:300] + "..." if len(chunk.content) > 300 else chunk.content,
+                    source_file=chunk.source_file,
+                    relevance_score=round(score, 3)
+                )
+            )
 
-    logger.info(f"💬 Session {session.session_id[:8]}... | {len(rag_results)} sources | {tokens_used} tokens")
+    logger.info(f"💬 Session {session.session_id[:8]}... | {len(unique_sources)} sources uniques | {tokens_used} tokens")
 
     return ChatResponse(
         session_id=session.session_id,
         response=response_text,
         language=body.language,
-        sources=sources,
+        sources=unique_sources,
         tokens_used=tokens_used,
         model=settings.GROQ_MODEL
     )
