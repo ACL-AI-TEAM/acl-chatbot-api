@@ -5,9 +5,24 @@ from app.services.session_manager import session_manager
 from app.services.groq_service import groq_service
 from app.config import settings
 import logging
+import httpx
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+BACKOFFICE_URL = "https://acl-backoffice-api.onrender.com"
+
+
+async def log_to_backoffice(data: dict):
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{BACKOFFICE_URL}/api/analytics/log/",
+                json=data,
+                timeout=5.0
+            )
+    except Exception as e:
+        logger.warning(f"⚠️ Log back-office échoué: {e}")
 
 
 @router.post("/chat", response_model=ChatResponse, summary="Envoyer un message au chatbot")
@@ -16,13 +31,9 @@ async def chat(
     body: ChatRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    # 1. Récupérer ou créer la session
     session = session_manager.get_or_create_session(body.session_id)
-
-    # 2. Ajouter le message utilisateur
     session_manager.add_message(session.session_id, "user", body.message)
 
-    # 3. Recherche RAG
     rag_service = request.app.state.rag_service
     rag_results = rag_service.search(
         query=body.message,
@@ -30,11 +41,8 @@ async def chat(
         country_filter=body.country_filter
     )
     context = rag_service.format_context(rag_results)
-
-    # 4. Historique de conversation
     history = session_manager.get_history(session.session_id)
 
-    # 5. Générer la réponse via Groq
     response_text, tokens_used = groq_service.generate_response(
         user_message=body.message,
         context=context,
@@ -42,10 +50,8 @@ async def chat(
         language=body.language.value
     )
 
-    # 6. Sauvegarder la réponse
     session_manager.add_message(session.session_id, "assistant", response_text)
 
-    # 7. Formater les sources — dédupliquées par nom de fichier
     seen_sources = set()
     unique_sources = []
     for chunk, score in rag_results:
@@ -60,6 +66,17 @@ async def chat(
             )
 
     logger.info(f"💬 Session {session.session_id[:8]}... | {len(unique_sources)} sources uniques | {tokens_used} tokens")
+
+    await log_to_backoffice({
+        "session_id": session.session_id,
+        "api_key_used": api_key,
+        "user_message": body.message,
+        "bot_response": response_text,
+        "language": body.language.value,
+        "country_filter": body.country_filter,
+        "tokens_used": tokens_used or 0,
+        "sources_count": len(unique_sources),
+    })
 
     return ChatResponse(
         session_id=session.session_id,
